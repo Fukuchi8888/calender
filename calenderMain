@@ -1,0 +1,166 @@
+
+function isHoliday_(date) {
+  
+  // ①土日の判定  
+  const day = date.getDay(); //曜日取得
+  if (day === 0 || day === 6) return true;
+  
+  // ②祝日の判定
+  const id = 'ja.japanese#holiday@group.v.calendar.google.com'
+  const cal = CalendarApp.getCalendarById(id);
+  const events = cal.getEventsForDay(date);
+  //なんらかのイベントがある＝祝日
+  if (events.length) return true;
+  
+  // ③特定の休日判定
+  const specialHoliday = [
+    '0813',
+    '0814',
+    '0815',
+    '0816',
+    '0817',
+    '1231',
+    '0101',
+    '0102',
+    '0103'
+  ];
+  
+  const mmdd = Utilities.formatDate(date, 'JST', 'MMdd');
+  
+  //someメソッドでtrue/falseいずれかが返る
+  return specialHoliday.some(value => value === mmdd);
+  
+}
+
+function getCalendarEvents() {
+  const sheet=SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const startDay=sheet.getRange("D3").getValue();//面談を検索したい日程の初めの日付
+  const span=sheet.getRange("D4").getValue();//面談を検索したい日程の期間
+  const　startTime=sheet.getRange("D5").getValue();
+  const　endTime=sheet.getRange("D6").getValue();
+  const CALENDAR_IDS = sheet.getRange(8,3,4).getValues();; //カレンダーID
+  var offsetTime=1000*60*30;//オフセットとして30分を用意
+  var k=0;
+  var range=sheet.getRange(4,7,30,50);
+  range.clear();
+  range.setFontSize(12);
+  range.setFontWeight("bold");
+  range.setHorizontalAlignment("center");
+
+  for(let i=0;i<span;i++){
+    var researchDayStart=new Date(startDay.getTime());
+    researchDayStart.setDate(startDay.getDate()+i);//入力したi日後の予定の始まり用
+    console.log(researchDayStart)
+    var month=researchDayStart.getMonth()+1;
+    var day=researchDayStart.getDate();
+    var dateText=month+"月"+ day +"日";
+    
+
+    if(isHoliday_(researchDayStart)){
+      console.log(dateText+" is Holiday");
+      console.log(typeof(dateText));
+      continue;
+    }
+    sheet.getRange(4,7+k).setValue(dateText);
+    
+    var researchDayEnd=new Date(researchDayStart.getTime());//終わりの時間用
+
+    researchDayStart.setHours(startTime);//13時から
+    researchDayEnd.setHours(endTime);//19時まで
+
+    var leftTimeStarts=[]; //予定のない時間の開始時間を格納した配列
+    var leftTimeEnds=[]; //予定のない時間の終了時間を格納した配列
+    
+    for(let k=0;k<CALENDAR_IDS.length;k++){
+      if(CALENDAR_IDS[k]==""){
+        console.log("null");
+        continue;
+      }
+      const calendar = CalendarApp.getCalendarById(CALENDAR_IDS[k]);
+      console.log(CALENDAR_IDS[k]);
+
+      var researchDayStartNew=new Date(researchDayStart.getTime());
+      researchDayStartNew.setMinutes(researchDayStartNew.getMinutes()-30);//ちょうど一時に終わる予定まで入れたいので補正時間を用意
+      var researchDayEndNew=new Date(researchDayEnd.getTime());
+      researchDayEndNew.setMinutes(researchDayEndNew.getMinutes()+30);//ちょうど7時から始まる予定まで入れたいので補正時間を用意
+
+      const events=calendar.getEvents(researchDayStartNew,researchDayEndNew);
+      const eventStarts=[];//イベントの開始時間を格納した配列
+      const eventEnds=[];//イベントの終了時間を格納した配列
+
+      for(event of events){
+        var eventStart=event.getStartTime();
+        eventStarts.push(eventStart);//イベントの開始時間を格納
+
+        var eventEnd=event.getEndTime();
+        eventEnds.push(eventEnd);//イベントの終了時間を格納
+      }
+
+      eventStarts.sort(function(a, b) {return new Date(a) - new Date(b);});//イベントの開始時間の配列を昇順に並び替える
+      eventEnds.sort(function(a, b) {return new Date(a) - new Date(b);});//イベントの終了時間の配列を昇順に並び替える
+
+      //午前中で予定があるというていで開始時間のリストと終了時間のリストに追加する
+      morningTimeStart=new Date(researchDayStart.getTime());
+      morningTimeStart.setHours(9);
+      morningTimeEnd=new Date(researchDayStart.getTime());
+      morningTimeEnd.setHours(12);
+      morningTimeEnd.setMinutes(30);
+
+      eventStarts.unshift(morningTimeStart);
+      eventEnds.unshift(morningTimeEnd);
+
+      for(let j=0;j<eventEnds.length;j++){
+        if(!eventStarts[j+1]){
+          if(eventEnds[j].getTime()+offsetTime<researchDayEnd.getTime()){
+            eventEnds[j].setTime(eventEnds[j].getTime()+offsetTime);
+            leftTimeStarts.push(eventEnds[j]);
+            leftTimeEnds.push(researchDayEnd);
+          }
+        }
+        else{
+          if(eventEnds[j].getTime()+offsetTime<eventStarts[j+1].getTime()-offsetTime){
+            eventEnds[j].setTime(eventEnds[j].getTime()+offsetTime);
+            eventStarts[j+1].setTime(eventStarts[j+1].getTime()-offsetTime);
+            leftTimeEnds.push(eventStarts[j+1]);
+            leftTimeStarts.push(eventEnds[j]);
+          }
+        }
+      }
+    }
+
+    leftTimeStarts.sort(function(a, b) {return new Date(a) - new Date(b);});//全員の予定のない時間の開始時間を昇順に並び替える
+    leftTimeEnds.sort(function(a, b) {return new Date(a) - new Date(b);});//全員の予定のない時間の終了時間を昇順に並び替える
+    var allLeftTimeStarts=[leftTimeStarts[0]];
+    var allLeftTimeEnds=[];
+
+    for(let j=0; j<leftTimeStarts.length;j++){
+      if(leftTimeStarts[j+1]){
+        if(leftTimeEnds[j].getTime()<leftTimeStarts[j+1].getTime()){
+            allLeftTimeStarts.push(leftTimeStarts[j+1]);
+            allLeftTimeEnds.push(leftTimeEnds[j]);
+        }
+      }
+      else{
+          allLeftTimeEnds.push(leftTimeEnds[j]);
+      }
+    }
+
+    console.log(allLeftTimeStarts);
+    console.log(allLeftTimeEnds);
+    sheet.getRange(4,7+k).setBackgroundRGB(230,230,230);
+    for(let a=0;a<allLeftTimeStarts.length;a++){
+      var hourStart=allLeftTimeStarts[a].getHours();
+      var minuteStart=allLeftTimeStarts[a].getMinutes();
+      var timeStart=hourStart+":"+minuteStart;
+      sheet.getRange(5+(a*4),7+k).setValue(timeStart);
+
+      var hourEnd=allLeftTimeEnds[a].getHours();
+      var minuteEnd=allLeftTimeEnds[a].getMinutes();
+      var timeEnd=hourEnd+":"+minuteEnd;
+      sheet.getRange(7+(a*4),7+k).setValue(timeEnd);
+
+      sheet.getRange(5+(a*4),7+k,3).setBackgroundRGB(151,197,255);
+    }
+    k++;
+  }
+}
